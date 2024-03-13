@@ -1,86 +1,90 @@
-import mongodb from 'mongodb';
-import envLoader from './env_loader';
+import { MongoClient } from 'mongodb';
 
 /**
- * Manages the MongoDB client connection and provides methods to interact
- * with the database for common operations such as counting documents in collections.
+ * Manages a MongoDB connection and provides utility methods for interacting
+ * with the database, such as querying document counts and managing collections.
  */
 class DBClient {
   /**
-   * Initializes the MongoDB client using environment variables for configuration.
-   * Establishes a connection to the MongoDB server.
+   * Initializes the MongoDB connection using environment variables or default settings,
+   * and ensures essential collections exist in the database.
    */
   constructor() {
-    envLoader(); // Load environment variables.
+    // Define MongoDB connection URL with environment variables or defaults.
     const host = process.env.DB_HOST || 'localhost';
     const port = process.env.DB_PORT || 27017;
     const database = process.env.DB_DATABASE || 'files_manager';
-    const dbURL = `mongodb://${host}:${port}/${database}`;
+    const url = `mongodb://${host}:${port}/${database}`;
 
-    this.client = new mongodb.MongoClient(dbURL, { useUnifiedTopology: true });
-    this.database = this.connect();
+    // Use unified topology configuration for MongoClient.
+    const options = { useUnifiedTopology: true };
+
+    // Connect to MongoDB asynchronously.
+    MongoClient.connect(url, options).then(client => {
+      this.db = client.db(database);
+      this.ensureCollections(['users', 'files']);
+    }).catch(err => {
+      console.error('MongoDB connection error:', err);
+    });
   }
 
   /**
-   * Asynchronously connects to the MongoDB database and logs errors if any.
-   * @returns {Promise<mongodb.Db>} The database instance.
-   */
-  async connect() {
-    try {
-      await this.client.connect();
-      console.log('Connected successfully to MongoDB');
-      return this.client.db();
-    } catch (error) {
-      console.error('Failed to connect to MongoDB:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Checks if the MongoDB client is currently connected.
-   * @returns {boolean} True if the client is connected, otherwise false.
+   * Checks if the database connection is established.
+   * @returns {boolean} True if the database connection is established, false otherwise.
    */
   isAlive() {
-    return this.client.isConnected();
+    return !!this.db;
   }
 
   /**
-   * Asynchronously counts the number of documents in the 'users' collection.
-   * @returns {Promise<number>} The count of documents in the collection.
+   * Retrieves the number of documents in the 'users' collection.
+   * @returns {Promise<number>} The document count.
    */
   async nbUsers() {
-    const db = await this.database;
-    return db.collection('users').countDocuments();
+    return this.db ? this.db.collection('users').countDocuments() : 0;
   }
 
   /**
-   * Asynchronously counts the number of documents in the 'files' collection.
-   * @returns {Promise<number>} The count of documents in the collection.
+   * Retrieves the number of documents in the 'files' collection.
+   * @returns {Promise<number>} The document count.
    */
   async nbFiles() {
-    const db = await this.database;
-    return db.collection('files').countDocuments();
+    return this.db ? this.db.collection('files').countDocuments() : 0;
   }
 
   /**
-   * Provides a reference to the 'users' collection.
-   * @returns {mongodb.Collection} The 'users' collection.
+   * Finds a user document in the 'users' collection.
+   * @param {object} user The query to find the user.
+   * @returns {Promise<object>} The user document if found.
    */
-  async usersCollection() {
-    const db = await this.database;
-    return db.collection('users');
+  async findUser(user) {
+    return this.db.collection('users').findOne(user);
   }
 
   /**
-   * Provides a reference to the 'files' collection.
-   * @returns {mongodb.Collection} The 'files' collection.
+   * Creates a new user document in the 'users' collection.
+   * @param {object} user The user document to insert.
+   * @returns {Promise<object>} The result of the insertion operation.
    */
-  async filesCollection() {
-    const db = await this.database;
-    return db.collection('files');
+  async createUser(user) {
+    return this.db.collection('users').insertOne(user);
+  }
+
+  /**
+   * Ensures that specified collections exist in the database, creating them if they do not.
+   * @param {string[]} collectionNames The names of collections to ensure existence.
+   */
+  async ensureCollections(collectionNames) {
+    const existingCollections = await this.db.listCollections().toArray();
+    const existingCollectionNames = existingCollections.map(col => col.name);
+
+    await Promise.all(collectionNames.map(async (name) => {
+      if (!existingCollectionNames.includes(name)) {
+        await this.db.createCollection(name);
+      }
+    }));
   }
 }
 
-// Export an instance of DBClient for use throughout the application.
-export const dbClient = new DBClient();
-export default dbClient;
+// Export a singleton instance of DBClient for global use.
+export default new DBClient();
